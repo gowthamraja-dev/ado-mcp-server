@@ -164,13 +164,13 @@ server.tool(
  */
 server.tool(
   "ado_link_pr_to_work_item",
-  "Link a pull request to a work item using PATCH relations. Pass the full Azure DevOps PR URL (dev.azure.com/.../_git/.../pullrequest/...). Org and project in the URL must match ADO_ORG and ADO_PROJECT.",
+  "Link a pull request to a work item using PATCH relations. Supports Azure DevOps PR URLs and GitHub PR URLs. Azure DevOps links are added as ArtifactLink; GitHub links are added as Hyperlink.",
   {
     workItemId: z.number().int().positive().describe("Work item to link"),
     prUrl: z
       .string()
       .url()
-      .describe("HTTPS PR URL on dev.azure.com"),
+      .describe("HTTPS PR URL on dev.azure.com or github.com"),
   },
   async ({ workItemId, prUrl }) => {
     const client = createClient();
@@ -189,7 +189,7 @@ server.tool(
  */
 server.tool(
   "ado_process_commit_message",
-  "Automation: parse commit message for #123 pattern. If found, adds comment 'Updated via commit: <message>' (idempotent). If prUrl is provided, also links that pull request to the work item.",
+  "Automation: parse commit message for #123 pattern. If found, adds comment 'Updated via commit: <message>' (idempotent). If prUrl is provided, links that pull request (Azure DevOps or GitHub) to the work item.",
   {
     commitMessage: z
       .string()
@@ -199,7 +199,7 @@ server.tool(
       .string()
       .url()
       .optional()
-      .describe("Optional Azure DevOps PR URL to link after commenting"),
+      .describe("Optional Azure DevOps or GitHub PR URL to link after commenting"),
   },
   async ({ commitMessage, prUrl }) => {
     const client = createClient();

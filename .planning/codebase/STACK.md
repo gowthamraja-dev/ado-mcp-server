@@ -1,56 +1,47 @@
-# STACK
+# Technology Stack Mapping (`ado-mcp-server`)
 
-## Repository Scope
-- This repo is a TypeScript Node.js MCP server focused on Azure DevOps automation.
-- Primary entrypoint is `src/index.ts`, compiled output goes to `dist/` via `tsc`.
-- CLI binary mapping is declared in `package.json` (`bin.ado-mcp-server -> dist/index.js`).
+## Runtime + Language
+- Runtime target is Node.js `>=20` (`package.json` `engines.node`).
+- Source language is TypeScript with ESM module mode (`package.json` `type: "module"`).
+- Entry point at runtime is `dist/index.js` (`package.json` `main`, `bin.ado-mcp-server`).
+- CLI-style executable shebang is in `src/index.ts` (`#!/usr/bin/env node`).
 
-## Languages / Runtime
-- Language: TypeScript (`src/index.ts`, `src/ado-api.ts`, `src/config.ts`).
-- Runtime: Node.js 20+ enforced by `package.json` `engines.node`.
-- Module system: ESM (`package.json` has `"type": "module"`).
-- JS target: ES2022 (`tsconfig.json` `compilerOptions.target`).
-- NodeNext module resolution (`tsconfig.json` `module` and `moduleResolution` are `NodeNext`).
+## Build + Dev Tooling
+- Build compiler is `typescript` (`package.json` `scripts.build`, `devDependencies.typescript`).
+- Development runner is `tsx` (`package.json` `scripts.dev`, `devDependencies.tsx`).
+- Production run command is `node dist/index.js` (`package.json` `scripts.start`).
+- No lint/test scripts are defined in `package.json` currently.
 
-## Frameworks / Libraries
-- MCP framework: `@modelcontextprotocol/sdk`.
-- Transport: stdio MCP transport via `StdioServerTransport` in `src/index.ts`.
-- Validation/schema: `zod` used for tool input contracts in `src/index.ts`.
-- Native web API usage: `fetch` and `URL` in `src/ado-api.ts` (no Axios/request layer).
+## TypeScript Configuration
+- Compiler config is in `tsconfig.json`.
+- Output directory is `dist` (`tsconfig.json` `compilerOptions.outDir`).
+- Input/source directory is `src` (`tsconfig.json` `compilerOptions.rootDir`).
+- Module system is `NodeNext` (`tsconfig.json` `module`, `moduleResolution`).
+- Target is `ES2022` (`tsconfig.json` `target`).
+- Type safety is strict (`tsconfig.json` `strict: true`).
+- Type declaration artifacts are generated (`tsconfig.json` `declaration`, `declarationMap`).
+- Source maps are enabled (`tsconfig.json` `sourceMap`).
 
-## Build / Tooling
-- Build command: `npm run build` -> `tsc` (`package.json` scripts).
-- Dev command: `npm run dev` -> `tsx src/index.ts`.
-- Start command: `npm run start` -> `node dist/index.js`.
-- Type tooling: `typescript`, `tsx`, `@types/node` in `devDependencies`.
-- Compiler emits declaration and source maps (`tsconfig.json`: `declaration`, `declarationMap`, `sourceMap`).
-- Strict typing is enabled (`tsconfig.json` `strict: true`).
+## Core Libraries
+- MCP framework: `@modelcontextprotocol/sdk` (`package.json` `dependencies`).
+- Schema/input validation: `zod` (`package.json` `dependencies`).
+- Node typings: `@types/node` (`package.json` `devDependencies`).
+- No ORM, no database client, no web framework dependency present.
 
-## Config / Environment
-- Runtime configuration is environment-driven in `src/config.ts`.
-- Required env vars: `ADO_PAT`, `ADO_ORG`, `ADO_PROJECT`.
-- Env validation helper: `isAdoEnvComplete()` in `src/config.ts`.
-- Missing config behavior: tools return structured error from `envErrorJson()`.
-- Credentials model: PAT only, never checked into code (documented in comments in `src/config.ts` and `src/index.ts`).
+## Application Architecture
+- Server assembly and tool registration lives in `src/index.ts`.
+- Azure DevOps HTTP integration and domain logic is encapsulated in `src/ado-api.ts`.
+- Environment loading/validation is isolated in `src/config.ts`.
+- Transport model is stdio MCP (`src/index.ts` imports `StdioServerTransport`).
 
-## Data / Storage
-- No local database, ORM, cache, or filesystem persistence layer.
-- State is effectively stateless per request; persistent data lives in Azure DevOps.
-- Data contracts are plain TS interfaces in `src/ado-api.ts`:
-- `WorkItemDetails`, `WorkItemComment`, `AddCommentResult`, `ParsedPrUrl`.
-- Comment de-duplication is computed in-memory by normalized text comparison (`normalizeCommentText`).
+## Exposed MCP Tool Surface
+- Health check tool: `ado_ping` (`src/index.ts`).
+- Work item read tool: `ado_get_work_item` (`src/index.ts`).
+- Comments list/add/update tools: `ado_list_comments`, `ado_add_comment`, `ado_update_comment` (`src/index.ts`).
+- PR linking tool: `ado_link_pr_to_work_item` (`src/index.ts`).
+- Commit automation tool: `ado_process_commit_message` (`src/index.ts`).
 
-## Deployment / Operations
-- Process model: CLI/server process launched by host and connected over stdio (`src/index.ts`).
-- Suitable for local MCP host execution or containerized process execution; no HTTP listener in this codebase.
-- Reliability controls: retry/backoff with jitter in `src/ado-api.ts` (`MAX_RETRIES`, `backoffMs`, `shouldRetryStatus`).
-- Error model: custom `AdoApiError` carrying status/body, converted to MCP-safe JSON responses.
-- Versioning:
-- Server version is hardcoded in `src/index.ts` as `0.2.0`.
-- Package version is `0.2.0` in `package.json`.
-
-## Not Present / Explicit Gaps
-- No test suite or test runner configs found in repository root.
-- No lint/format config (e.g., ESLint/Prettier) found in tracked files.
-- No CI/CD workflow files in the visible repository snapshot.
-- No secrets manager integration; env injection must be handled by runtime environment.
+## Packaging and Distribution Notes
+- Package is private (`package.json` `private: true`) and versioned `0.2.0`.
+- Built output folder `dist/` is present in repository root.
+- Lockfile is npm (`package-lock.json`), so package manager baseline is npm.

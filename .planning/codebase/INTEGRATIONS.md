@@ -1,73 +1,49 @@
-# INTEGRATIONS
+# Integration Mapping (`ado-mcp-server`)
 
-## Integration Inventory
-- Primary external integration is Azure DevOps REST APIs via `https://dev.azure.com/...` from `src/ado-api.ts`.
-- Primary internal integration is MCP host <-> server over stdio via `@modelcontextprotocol/sdk` in `src/index.ts`.
-- No additional third-party SaaS integrations are referenced in current source files.
+## External Service: Azure DevOps REST APIs
+- Primary integration target is Azure DevOps at `https://dev.azure.com` (`src/ado-api.ts`).
+- Project-scoped base URL is composed in `projectRootUrl(org, project)` (`src/ado-api.ts`).
+- Organization-scoped base URL is composed in `orgRootUrl(org)` (`src/ado-api.ts`).
+- API versions are hard-coded constants: WIT `7.1`, Comments `7.1-preview.3`, Git `7.1`, Projects `7.1` (`src/ado-api.ts`).
 
-## Internal Service Boundaries
-- MCP surface layer: `src/index.ts`.
-- Responsibility: register tools, validate input (`zod`), serialize outputs, map errors.
-- Azure DevOps client layer: `src/ado-api.ts`.
-- Responsibility: REST URL construction, auth headers, retries, parsing, idempotency checks.
-- Configuration boundary: `src/config.ts`.
-- Responsibility: load/validate environment and produce standardized config errors.
+## Authentication + Configuration Contract
+- Authentication uses PAT via Basic auth header (`basicAuthHeader` in `src/ado-api.ts`).
+- Required env vars are `ADO_PAT`, `ADO_ORG`, `ADO_PROJECT` (`src/config.ts`).
+- Environment read and completeness validation occur in `loadAdoEnv` and `isAdoEnvComplete` (`src/config.ts`).
+- Missing env handling returns structured error JSON (`envErrorJson` in `src/config.ts`).
 
-## External APIs and Endpoints
-- Work Item Tracking API (`WIT_API = 7.1`) used for:
-- GET work item details (`/_apis/wit/workitems/{id}`).
-- PATCH work item relations to add PR artifact links (`/_apis/wit/workitems/{id}`).
-- Comments API (`COMMENTS_API = 7.1-preview.3`) used for:
-- GET comments (`/_apis/wit/workItems/{id}/comments?$top=...`).
-- POST comment create.
-- PATCH comment update.
-- Projects API (`PROJECTS_API = 7.1`) used for project GUID lookup (`/_apis/projects/{project}`).
-- Git API (`GIT_API = 7.1`) used for repository GUID lookup (`/_apis/git/repositories/{repo}`).
+## HTTP Client Behavior
+- All calls use global `fetch` through `AdoClient.request` (`src/ado-api.ts`).
+- Retry policy is applied for `429`, `502`, `503`, `504` (`shouldRetryStatus` in `src/ado-api.ts`).
+- Backoff strategy is exponential with jitter and a 30s cap (`backoffMs`, `jitter`, `MAX_RETRIES` in `src/ado-api.ts`).
+- Errors are normalized into `AdoApiError` with status/body capture (`src/ado-api.ts`).
 
-## Authentication and Authorization
-- Auth method: HTTP Basic with PAT in `Authorization` header (`basicAuthHeader()` in `src/ado-api.ts`).
-- PAT source: `ADO_PAT` environment variable via `loadAdoEnv()` in `src/config.ts`.
-- Tenant scoping:
-- Org and project are loaded from `ADO_ORG` and `ADO_PROJECT`.
-- PR linking validates URL org/project must match configured env values.
-- No OAuth flow, token refresh, or delegated user auth in this codebase.
+## Azure DevOps Endpoint Coverage
+- Work item fetch: `GET /_apis/wit/workitems/{id}` (`getWorkItemDetails` in `src/ado-api.ts`).
+- Work item raw with relations: `GET ...?$expand=relations` (`getWorkItemRaw` in `src/ado-api.ts`).
+- Comments list: `GET /_apis/wit/workItems/{id}/comments?$top=n` (`listComments` in `src/ado-api.ts`).
+- Add comment: `POST /_apis/wit/workItems/{id}/comments` (`addComment` in `src/ado-api.ts`).
+- Update comment: `PATCH /_apis/wit/workItems/{id}/comments/{commentId}` (`updateComment` in `src/ado-api.ts`).
+- Add relation: `PATCH /_apis/wit/workitems/{id}` with JSON Patch (`addWorkItemRelation` in `src/ado-api.ts`).
+- Resolve project ID: `GET /_apis/projects/{project}` (`getProjectId` in `src/ado-api.ts`).
+- Resolve repository ID: `GET /_apis/git/repositories/{repo}` (`getRepositoryId` in `src/ado-api.ts`).
 
-## MCP Tool-Level Integration Contracts
-- `ado_ping`: process health only, no Azure API call.
-- `ado_get_work_item`: reads title/description/state/assignedTo.
-- `ado_list_comments`: reads non-deleted comments with optional `top` cap.
-- `ado_add_comment`: can suppress duplicates by normalized text match.
-- `ado_update_comment`: patches comment text by `commentId`.
-- `ado_link_pr_to_work_item`: parses PR URL and creates ArtifactLink relation.
-- `ado_process_commit_message`: parses `#<id>`, adds idempotent comment, optionally links PR.
+## URL Parsing + Linking Integrations
+- Azure DevOps PR URL parsing is implemented by `parseAzureDevOpsPrUrl` (`src/ado-api.ts`).
+- GitHub PR URL parsing is implemented by `parseGithubPrUrl` (`src/ado-api.ts`).
+- Azure DevOps PR links are converted to `vstfs:///Git/PullRequestId/...` artifact URLs (`buildPullRequestArtifactUrl` in `src/ado-api.ts`).
+- Relation type for Azure DevOps PR is `ArtifactLink` (`linkPullRequestToWorkItem` in `src/ado-api.ts`).
+- Relation type for GitHub PR is `Hyperlink` with a descriptive comment attribute (`linkPullRequestToWorkItem` in `src/ado-api.ts`).
+- Duplicate relation suppression uses normalized URL comparators (`vstfsComparable`, `urlComparable` in `src/ado-api.ts`).
 
-## Data Boundaries and Transformations
-- Inbound boundary: MCP tool arguments validated by `zod` schemas in `src/index.ts`.
-- Outbound boundary: all tool responses normalized to JSON text payloads (`toolResult()`).
-- Work item shaping: raw ADO fields are narrowed to a typed subset (`WorkItemDetails`).
-- Comment normalization: whitespace normalization (`normalizeCommentText`) for idempotency.
-- PR URL transformation:
-- Parse human URL (`parseAzureDevOpsPrUrl`).
-- Resolve project/repo GUIDs.
-- Construct `vstfs:///Git/PullRequestId/...` artifact URL for relation patch.
+## MCP Integration Surface (Consumer-facing)
+- MCP server bootstrapping uses `McpServer` + `StdioServerTransport` (`src/index.ts`).
+- Tool schemas and validation use `zod` in each `server.tool(...)` definition (`src/index.ts`).
+- Business integration boundary is `AdoClient` created via `createClient()` (`src/index.ts`).
+- Tool-level error mapping converts `AdoApiError` to JSON response payloads (`errResult` in `src/index.ts`).
 
-## Failure Modes and Resilience
-- Config failures: missing env vars short-circuit with explicit error JSON.
-- API failures:
-- Non-2xx returns throw `AdoApiError` with status and truncated body context.
-- Retried statuses: `429`, `502`, `503`, `504` with exponential backoff + jitter.
-- Non-API failures (network/runtime) are retried up to `MAX_RETRIES` then surfaced.
-- Duplicate relation/comment behavior is idempotent and returns non-error "no change" style outcomes.
-- URL validation failures (invalid PR URL or org/project mismatch) return structured non-throwing results.
-
-## Key Config and Change Hotspots
-- Environment and validation: `src/config.ts`.
-- Tool registration/API contract changes: `src/index.ts`.
-- Endpoint versions, retry policy, auth, and ADO data mapping: `src/ado-api.ts`.
-- Build/runtime metadata: `package.json` and `tsconfig.json`.
-
-## Operational Notes for Planning
-- Integration risk centers on Azure DevOps API contracts and permissions of PAT scopes.
-- Comments endpoint uses preview API version; this is the most likely version-churn point.
-- Because transport is stdio, orchestration reliability depends on host process management, not HTTP infra in this repo.
-- No persistent queue/store means transient failures are retried in-process only and then returned to caller.
+## Automation Flow Integration
+- Commit message automation parses `#<id>` references (`processCommitMessage` in `src/ado-api.ts`).
+- It posts idempotent comments (`addComment` + `normalizeCommentText` in `src/ado-api.ts`).
+- Optional PR URL from automation is linked through the same relation flow (`processCommitMessage` in `src/ado-api.ts`).
+- This behavior is exposed to MCP clients via `ado_process_commit_message` (`src/index.ts`).

@@ -1,63 +1,40 @@
-# Architecture Mapping (`ado-mcp-server`)
+# Architecture Mapping
 
-## System Role
-- `ado-mcp-server` is a single-process MCP server that exposes Azure DevOps automation as MCP tools.
-- Runtime entrypoint is `src/index.ts`, compiled to `dist/index.js`.
-- Primary external dependency boundary is Azure DevOps REST APIs reached through `fetch` in `src/ado-api.ts`.
+## System Type
+- The repository implements a single-process MCP server for Azure DevOps automation.
+- Runtime entrypoint is `src/index.ts`, compiled to `dist/index.js` via `tsc` from `package.json` scripts.
+- Transport is stdio through `StdioServerTransport` from `@modelcontextprotocol/sdk`.
 
-## Entry Points
-- Process bootstrap starts in `src/index.ts`.
-- MCP server is created via `new McpServer({ name, version })` in `src/index.ts`.
-- Transport boundary is stdio (`StdioServerTransport`) in `src/index.ts`; this is a CLI-connected MCP server, not HTTP.
-- Package executable mapping (`package.json` -> `bin.ado-mcp-server`) points to `dist/index.js`.
+## Core Components
+- `src/index.ts`: server composition and tool registration layer.
+- `src/ado-api.ts`: Azure DevOps HTTP client and domain logic for work items, comments, PR linking, and commit processing.
+- `src/config.ts`: environment loading and validation for `ADO_PAT`, `ADO_ORG`, and `ADO_PROJECT`.
 
-## Architectural Layers
-- Tool Interface Layer: MCP tool registrations and zod input schemas in `src/index.ts`.
-- Application Service Layer: methods on `AdoClient` in `src/ado-api.ts` (work item, comments, PR linking, commit automation).
-- Integration/Infra Layer: generic request/retry/auth/url builders in `src/ado-api.ts` (`request`, `headers`, URL helpers).
-- Configuration Layer: environment loading and validation in `src/config.ts`.
+## Runtime Flow
+- Process starts in `src/index.ts` and constructs `McpServer` with name/version metadata.
+- Each MCP tool in `src/index.ts` validates input with `zod`, creates an `AdoClient` from `loadAdoEnv()`, and calls a method in `src/ado-api.ts`.
+- `createClient()` returns `null` when env is incomplete; tool handlers return `envErrorJson()` from `src/config.ts` in that case.
+- Successful responses are normalized through `toolResult()` in `src/index.ts` and always serialized as text JSON payloads.
+- Errors from API calls are normalized via `errResult()`; `AdoApiError` status/body details are surfaced.
 
-## Request and Data Flow
-- Tool invocation enters a specific `server.tool(...)` handler in `src/index.ts`.
-- Handler calls `createClient()` (`src/index.ts`), which consumes `loadAdoEnv()` and `isAdoEnvComplete()` from `src/config.ts`.
-- If env is incomplete, handler returns a normalized error payload via `envErrorJson()`.
-- If env is complete, handler delegates to `AdoClient` methods in `src/ado-api.ts`.
-- `AdoClient.request()` builds auth headers (`Authorization: Basic <PAT>`) and executes `fetch` with retry/backoff for 429/502/503/504.
-- Successful raw responses are transformed to typed DTO-style objects (`WorkItemDetails`, `WorkItemComment`, etc.).
-- Tool layer wraps results with consistent JSON text output via `toolResult()` in `src/index.ts`.
-- Errors are normalized at boundary via `errResult()` (`AdoApiError` status-aware + generic fallback).
+## Integration Boundaries
+- External dependency boundary is Azure DevOps REST endpoints (`_apis/wit`, `_apis/git`, `_apis/projects`) in `src/ado-api.ts`.
+- Authentication is PAT Basic auth header generation in `basicAuthHeader()` inside `src/ado-api.ts`.
+- No database, cache, queue, or filesystem persistence layer is present in `src/`.
 
-## Module Boundaries
-- `src/index.ts` owns protocol shape, schema validation, and response formatting.
-- `src/ado-api.ts` owns all Azure DevOps protocol/endpoint specifics and transformation logic.
-- `src/config.ts` owns environment contract only (`ADO_PAT`, `ADO_ORG`, `ADO_PROJECT`).
-- `src/index.ts` does not directly build URLs or call `fetch`; it only uses `AdoClient`.
-- `src/ado-api.ts` does not depend on MCP SDK types; this separation supports easier unit testing.
+## Domain Operations
+- Work item read model: `getWorkItemDetails()` in `src/ado-api.ts` maps raw fields to a stable response shape.
+- Comment operations: `listComments()`, `addComment()`, `updateComment()` in `src/ado-api.ts`.
+- Idempotency rule: duplicate suppression in `addComment()` uses `normalizeCommentText()`.
+- PR relation operations: `linkPullRequestToWorkItem()` supports ADO PR URLs as `ArtifactLink` and GitHub PR URLs as `Hyperlink`.
+- Commit automation: `processCommitMessage()` extracts `#<id>`, posts commit-derived comment, then optionally links PR.
 
-## State Management
-- No persistent store exists.
-- State is ephemeral per request, derived from:
-- Process environment (`process.env`) through `src/config.ts`.
-- Remote Azure DevOps entities fetched on demand.
-- Idempotency strategy is functional and remote-state based:
-- Comment duplication prevention uses normalized text compare in `AdoClient.addComment()`.
-- PR linking avoids duplicate relations by reading existing work item relations before PATCH.
+## Resilience and Error Strategy
+- HTTP layer retry policy is centralized in `AdoClient.request()` (`MAX_RETRIES=5`, exponential backoff with jitter).
+- Retry status set is explicit: 429, 502, 503, 504 via `shouldRetryStatus()`.
+- Non-retriable failures throw `AdoApiError` with bounded response body preview.
 
-## Cross-Cutting Concerns
-- Validation: zod schemas at tool boundary in `src/index.ts`.
-- Error shaping: centralized result wrappers (`toolResult`, `errResult`) in `src/index.ts`.
-- Retry resilience: bounded exponential backoff with jitter in `src/ado-api.ts`.
-- Security: PAT only from env (`src/config.ts`), never hardcoded.
-- Compatibility: API versions are constants in `src/ado-api.ts` (`WIT_API`, `COMMENTS_API`, etc.).
-
-## Notable Patterns and Tradeoffs
-- Pattern: thin transport/controller + richer service client.
-- Pattern: DTO mapping to avoid leaking Azure response variability to tool consumers.
-- Tradeoff: all tools share one `AdoClient` class, which is simple but can become a large god-object as features grow.
-- Tradeoff: no structured logger and no metrics hooks; troubleshooting relies on surfaced API error text.
-
-## Extension Guidance
-- Add new MCP tools in `src/index.ts` with zod input schema and `toolResult`/`errResult` response wrapping.
-- Add Azure DevOps operations in `src/ado-api.ts` as focused methods using existing `request()` helper.
-- Add new required configuration in `src/config.ts` and consume it through `createClient()` flow.
-- Preserve current layering: avoid adding raw `fetch` calls directly in `src/index.ts`.
+## Architectural Notes
+- Current architecture is intentionally thin: one orchestration layer (`src/index.ts`) and one service client (`src/ado-api.ts`).
+- Parsing/normalization utilities in `src/ado-api.ts` (URL parsing, GUID normalization, comparable URLs) isolate protocol-specific details.
+- Configuration concerns are separated cleanly into `src/config.ts`, avoiding credential hardcoding and keeping tool handlers stateless.

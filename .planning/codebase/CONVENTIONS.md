@@ -1,54 +1,41 @@
-# Coding Conventions
+# Code Conventions
 
-## Scope and Current Maturity
-- The implementation is concentrated in `src/index.ts`, `src/ado-api.ts`, and `src/config.ts`.
-- This is a small, single-package Node + TypeScript service with ESM output (`"type": "module"` in `package.json`).
-- Conventions are mostly implicit in code patterns rather than enforced by lint/format tooling.
+## Scope
+This document reflects the current conventions in `src/index.ts`, `src/ado-api.ts`, `src/config.ts`, `package.json`, and `tsconfig.json`.
 
-## TypeScript and Style Baseline
-- TypeScript is strict (`"strict": true` in `tsconfig.json`), so new code should avoid `any` and prefer explicit interfaces.
-- Module system is NodeNext ESM (`"module": "NodeNext"`, `"moduleResolution": "NodeNext"` in `tsconfig.json`).
-- Imports use explicit `.js` extensions for local modules in TS source (for example `import { AdoClient } from "./ado-api.js";` in `src/index.ts`).
-- Favor `const` for immutable values and named helpers for repeated logic (see `jsonText`, `toolResult`, `errResult` in `src/index.ts`).
-- Keep utility functions small and pure where possible (`normalizeCommentText`, `backoffMs`, `parseAzureDevOpsPrUrl` in `src/ado-api.ts`).
+## Language and Runtime
+- The project is TypeScript-first with ESM enabled via `"type": "module"` in `package.json`.
+- Build output goes to `dist/` from `src/` as configured in `tsconfig.json` (`"outDir": "dist"`, `"rootDir": "src"`).
+- Module mode uses NodeNext (`"module": "NodeNext"`, `"moduleResolution": "NodeNext"`) in `tsconfig.json`.
+- Node baseline is explicit in `package.json` as `"node": ">=20"`.
 
-## Naming Conventions
-- Types and interfaces use PascalCase: `AdoClient`, `AdoApiError`, `WorkItemDetails` in `src/ado-api.ts`.
-- Functions and variables use camelCase: `createClient`, `loadAdoEnv`, `pickAssignedTo`.
-- Constants use SCREAMING_SNAKE_CASE: `MAX_RETRIES`, `BASE_DELAY_MS`, `COMMENTS_API`.
-- Tool names are snake_case strings exposed to MCP clients: `"ado_get_work_item"`, `"ado_process_commit_message"` in `src/index.ts`.
-- Environment variable names are uppercase with `ADO_` prefix: `ADO_PAT`, `ADO_ORG`, `ADO_PROJECT` in `src/config.ts`.
+## Strictness and Type Discipline
+- Compiler strict mode is enabled (`"strict": true` in `tsconfig.json`), so nullability and implicit any checks are expected.
+- Public shapes are declared with interfaces in `src/ado-api.ts` (`WorkItemDetails`, `WorkItemComment`, `AddCommentResult`, `ParsedPrUrl`, `ParsedGithubPrUrl`).
+- Unknown input is normalized through narrow helper functions in `src/ado-api.ts` (`pickString`, `pickDescription`, `pickAssignedTo`).
 
-## Module Organization Patterns
-- `src/index.ts` acts as composition root:
-- It initializes the server, validates environment readiness, registers tools, and maps errors to tool output.
-- `src/ado-api.ts` is the API integration layer:
-- It encapsulates HTTP requests, retry/backoff logic, URL construction, parsing, and domain mapping.
-- `src/config.ts` isolates environment loading and readiness checks.
-- Practical rule: keep MCP transport/tool registration in `src/index.ts`; move remote-API logic and parsing into `src/ado-api.ts`-style modules.
+## Import and Module Conventions
+- Internal imports include `.js` extensions even inside `.ts` sources, e.g. `import { AdoClient } from "./ado-api.js"` in `src/index.ts`.
+- Type-only imports are used where appropriate, e.g. `import type { AdoEnvConfig } from "./config.js"` in `src/ado-api.ts`.
+- Third-party libraries are focused and minimal: MCP SDK and Zod in `package.json`.
 
-## Error Handling and Logging
-- Domain-specific errors are wrapped in `AdoApiError` with `status` and optional `body` (`src/ado-api.ts`).
-- Tool handlers never throw to caller; they return structured `{ ok: false, error, status? }` payloads through `errResult` in `src/index.ts`.
-- Retry logic is centralized in `AdoClient.request` with exponential backoff and jitter for transient status codes 429/502/503/504.
-- Input validation is defensive: invalid PR URLs return explicit non-throw responses in `linkPullRequestToWorkItem`.
-- There is currently no centralized logging abstraction (no `console` logging pattern and no logger module).
-- Recommendation: add minimal structured logging (request id, tool name, error class, status) without including PAT or sensitive headers.
+## API and Error-Handling Conventions
+- External API faults are wrapped with a typed domain error `AdoApiError` in `src/ado-api.ts`.
+- Retry behavior is centralized in `AdoClient.request()` in `src/ado-api.ts` with exponential backoff and jitter (`MAX_RETRIES`, `backoffMs`, `shouldRetryStatus`).
+- Tool handlers in `src/index.ts` follow a stable pattern: create client, gate on env completeness, `try/catch`, return structured JSON.
+- Response formatting is normalized via `jsonText()`, `toolResult()`, and `errResult()` in `src/index.ts`.
 
-## Configuration Patterns
-- Configuration is runtime-only through environment variables (`loadAdoEnv` in `src/config.ts`).
-- Missing config is handled as a user-facing structured error (`envErrorJson`) rather than process crash.
-- `createClient` in `src/index.ts` gates all API operations on `isAdoEnvComplete`.
-- Practical rule: keep config loading/validation pure and centralized; avoid reading `process.env` directly outside `src/config.ts`.
+## Input Validation and Tool Contract Conventions
+- MCP tool schemas are validated with Zod in `src/index.ts` (`z.number().int().positive()`, `z.string().url()`, optional flags).
+- Defaults are explicit in handlers, e.g. comments pagination defaults to `200` in `src/index.ts`.
+- Idempotent behavior is a recurring convention for mutation paths (`addComment()` duplicate suppression and relation de-dup checks in `src/ado-api.ts`).
 
-## API and Contract Patterns
-- MCP tool inputs are validated with `zod` schemas at registration (`server.tool` blocks in `src/index.ts`).
-- Tool outputs are consistently text-wrapped JSON via `toolResult` for protocol compatibility.
-- Client API methods return typed domain objects rather than raw response blobs (`WorkItemDetails`, `WorkItemComment`).
-- Idempotency is explicit for comment creation (`addComment` duplicate suppression via normalized text in `src/ado-api.ts`).
-- Cross-system linking validates org/project alignment before write operations (`linkPullRequestToWorkItem`).
+## Security and Configuration Conventions
+- Credentials are environment-driven only via `loadAdoEnv()` in `src/config.ts`.
+- Missing env state is surfaced as structured JSON through `envErrorJson()` in `src/config.ts`.
+- URL and identity matching logic for PR linking is explicitly guarded in `linkPullRequestToWorkItem()` in `src/ado-api.ts`.
 
-## Quality Recommendations (Conventions)
-- Add lint and formatting scripts in `package.json` (for example `lint`, `format`, `typecheck`) to make conventions enforceable.
-- Add a lightweight architecture note describing the `index/config/api` boundary so new files follow the same shape.
-- Introduce a shared result type for tool responses to reduce accidental output drift across handlers.
+## Documentation and Naming Conventions
+- Top-level functions and tool blocks frequently include concise JSDoc comments in `src/index.ts` and `src/ado-api.ts`.
+- Naming is descriptive and action-oriented (`getWorkItemDetails`, `listComments`, `processCommitMessage`, `parseAzureDevOpsPrUrl`).
+- Constants are uppercase snake case (`WIT_API`, `COMMENTS_API`, `MAX_RETRIES`, `BASE_DELAY_MS`) in `src/ado-api.ts`.

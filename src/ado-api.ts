@@ -70,6 +70,12 @@ export interface ParsedPrUrl {
   pullRequestId: number;
 }
 
+export interface ParsedGithubPrUrl {
+  owner: string;
+  repo: string;
+  pullRequestId: number;
+}
+
 export class AdoApiError extends Error {
   constructor(
     message: string,
@@ -278,80 +284,100 @@ export class AdoClient {
   }
 
   /**
-   * Link a pull request to a work item using JSON Patch on relations (ArtifactLink).
-   * PR URL format: https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}
+   * Link a pull request to a work item.
+   * - Azure DevOps PR URLs are linked as ArtifactLink.
+   * - GitHub PR URLs are linked as Hyperlink.
    */
   async linkPullRequestToWorkItem(
     workItemId: number,
     prUrlInput: string
   ): Promise<{ linked: boolean; artifactUrl: string; message: string }> {
-    const parsed = parseAzureDevOpsPrUrl(prUrlInput.trim());
-    if (!parsed) {
-      return {
-        linked: false,
-        artifactUrl: "",
-        message:
-          "Invalid PR URL. Expected: https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{id}",
-      };
-    }
-    if (
-      parsed.org.toLowerCase() !== this.cfg.org.toLowerCase() ||
-      parsed.project.toLowerCase() !== this.cfg.project.toLowerCase()
-    ) {
-      return {
-        linked: false,
-        artifactUrl: "",
-        message: `PR URL org/project must match ADO_ORG and ADO_PROJECT (got ${parsed.org}/${parsed.project}, expected ${this.cfg.org}/${this.cfg.project}).`,
-      };
-    }
+    const prUrl = prUrlInput.trim();
+    const adoParsed = parseAzureDevOpsPrUrl(prUrl);
+    if (adoParsed) {
+      if (
+        adoParsed.org.toLowerCase() !== this.cfg.org.toLowerCase() ||
+        adoParsed.project.toLowerCase() !== this.cfg.project.toLowerCase()
+      ) {
+        return {
+          linked: false,
+          artifactUrl: "",
+          message: `PR URL org/project must match ADO_ORG and ADO_PROJECT (got ${adoParsed.org}/${adoParsed.project}, expected ${this.cfg.org}/${this.cfg.project}).`,
+        };
+      }
 
-    const projectGuid = await this.getProjectId(parsed.org, parsed.project);
-    const repoGuid = await this.getRepositoryId(
-      parsed.org,
-      parsed.project,
-      parsed.repo
-    );
-    const artifactUrl = buildPullRequestArtifactUrl(
-      projectGuid,
-      repoGuid,
-      parsed.pullRequestId
-    );
+      const projectGuid = await this.getProjectId(adoParsed.org, adoParsed.project);
+      const repoGuid = await this.getRepositoryId(
+        adoParsed.org,
+        adoParsed.project,
+        adoParsed.repo
+      );
+      const artifactUrl = buildPullRequestArtifactUrl(
+        projectGuid,
+        repoGuid,
+        adoParsed.pullRequestId
+      );
 
-    const existing = await this.getWorkItemRaw(workItemId);
-    const rels = existing.relations ?? [];
-    const want = vstfsComparable(artifactUrl);
-    if (rels.some((r) => r.url && vstfsComparable(r.url) === want)) {
-      return {
-        linked: false,
-        artifactUrl,
-        message: "Relation already present; no change.",
-      };
-    }
+      const existing = await this.getWorkItemRaw(workItemId);
+      const rels = existing.relations ?? [];
+      const want = vstfsComparable(artifactUrl);
+      if (rels.some((r) => r.url && vstfsComparable(r.url) === want)) {
+        return {
+          linked: false,
+          artifactUrl,
+          message: "Relation already present; no change.",
+        };
+      }
 
-    const patchUrl = this.witUrl(`workitems/${workItemId}`);
-    await this.request(
-      "PATCH",
-      patchUrl,
-      [
-        {
-          op: "add",
-          path: "/relations/-",
-          value: {
-            rel: "ArtifactLink",
-            url: artifactUrl,
-            attributes: {
-              name: "Pull Request",
-            },
-          },
+      await this.addWorkItemRelation(workItemId, {
+        rel: "ArtifactLink",
+        url: artifactUrl,
+        attributes: {
+          name: "Pull Request",
         },
-      ],
-      { contentType: "application/json-patch+json" }
-    );
+      });
+
+      return {
+        linked: true,
+        artifactUrl,
+        message: "Pull request linked to work item.",
+      };
+    }
+
+    const githubParsed = parseGithubPrUrl(prUrl);
+    if (githubParsed) {
+      const existing = await this.getWorkItemRaw(workItemId);
+      const rels = existing.relations ?? [];
+      const want = urlComparable(prUrl);
+      if (rels.some((r) => r.url && urlComparable(r.url) === want)) {
+        return {
+          linked: false,
+          artifactUrl: prUrl,
+          message: "GitHub PR link already present; no change.",
+        };
+      }
+
+      await this.addWorkItemRelation(workItemId, {
+        rel: "Hyperlink",
+        url: prUrl,
+        attributes: {
+          name: "GitHub Pull Request",
+          comment: `github.com/${githubParsed.owner}/${githubParsed.repo}#${githubParsed.pullRequestId}`,
+        },
+      });
+
+      return {
+        linked: true,
+        artifactUrl: prUrl,
+        message: "GitHub pull request linked to work item as Hyperlink.",
+      };
+    }
 
     return {
-      linked: true,
-      artifactUrl,
-      message: "Pull request linked to work item.",
+      linked: false,
+      artifactUrl: "",
+      message:
+        "Invalid PR URL. Expected Azure DevOps URL (dev.azure.com/.../_git/.../pullrequest/{id}) or GitHub URL (github.com/{owner}/{repo}/pull/{id}).",
     };
   }
 
@@ -414,6 +440,29 @@ export class AdoClient {
     const data = await this.request<{ id: string }>("GET", url);
     return normalizeGuid(data.id);
   }
+
+  private async addWorkItemRelation(
+    workItemId: number,
+    relation: {
+      rel: "ArtifactLink" | "Hyperlink";
+      url: string;
+      attributes?: Record<string, unknown>;
+    }
+  ): Promise<void> {
+    const patchUrl = this.witUrl(`workitems/${workItemId}`);
+    await this.request(
+      "PATCH",
+      patchUrl,
+      [
+        {
+          op: "add",
+          path: "/relations/-",
+          value: relation,
+        },
+      ],
+      { contentType: "application/json-patch+json" }
+    );
+  }
 }
 
 function vstfsComparable(url: string): string {
@@ -426,6 +475,17 @@ function vstfsComparable(url: string): string {
 
 function normalizeGuid(id: string): string {
   return id.replace(/[{}]/g, "").toLowerCase();
+}
+
+function urlComparable(url: string): string {
+  try {
+    const u = new URL(url.trim());
+    let path = u.pathname;
+    if (path.length > 1) path = path.replace(/\/+$/, "");
+    return `${u.protocol}//${u.host}${path}`.toLowerCase();
+  } catch {
+    return url.trim().toLowerCase().replace(/\/+$/, "");
+  }
 }
 
 function buildPullRequestArtifactUrl(
@@ -444,13 +504,30 @@ export function parseAzureDevOpsPrUrl(raw: string): ParsedPrUrl | null {
     // org, project, _git, repo, pullrequest, id
     const gi = parts.indexOf("_git");
     const pi = parts.indexOf("pullrequest");
-    if (gi < 0 || pi < 0 || pi <= gi + 2) return null;
+    if (gi < 0 || pi < 0 || pi !== gi + 2 || pi + 1 >= parts.length) return null;
     const org = parts[0]!;
     const project = parts[1]!;
     const repo = parts[gi + 1]!;
     const prId = Number.parseInt(parts[pi + 1]!, 10);
     if (Number.isNaN(prId)) return null;
     return { org, project, repo, pullRequestId: prId };
+  } catch {
+    return null;
+  }
+}
+
+export function parseGithubPrUrl(raw: string): ParsedGithubPrUrl | null {
+  try {
+    const u = new URL(raw.split("?")[0]!);
+    if (u.hostname !== "github.com") return null;
+    const parts = u.pathname.split("/").filter(Boolean);
+    // owner, repo, pull, id
+    if (parts.length < 4 || parts[2] !== "pull") return null;
+    const owner = parts[0]!;
+    const repo = parts[1]!;
+    const prId = Number.parseInt(parts[3]!, 10);
+    if (Number.isNaN(prId)) return null;
+    return { owner, repo, pullRequestId: prId };
   } catch {
     return null;
   }

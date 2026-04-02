@@ -1,62 +1,45 @@
-# Repository Structure Mapping (`ado-mcp-server`)
+# Structure Mapping
 
-## Top-Level Layout
-- `src/`: authoritative TypeScript source.
-- `dist/`: compiled JavaScript and declaration outputs from `tsc`.
-- `.planning/`: planning artifacts; codebase mapping docs live in `.planning/codebase/`.
-- `package.json`: package metadata, scripts, runtime entrypoint, dependency graph.
-- `tsconfig.json`: compiler boundaries (`rootDir: src`, `outDir: dist`).
-- `README.md`: minimal project descriptor (currently sparse).
+## Repository Layout
+- `package.json`: package metadata, runtime scripts, Node engine constraint (`>=20`), and dependency manifest.
+- `package-lock.json`: npm lockfile for reproducible dependency graph.
+- `tsconfig.json`: TypeScript compiler configuration for building `src/` into `dist/`.
+- `README.md`: high-level capability summary and environment requirements.
+- `src/index.ts`: MCP server bootstrap and tool registration.
+- `src/ado-api.ts`: Azure DevOps API client and domain methods.
+- `src/config.ts`: environment configuration helpers.
+- `.planning/codebase/ARCHITECTURE.md`: architecture-focused mapping document.
+- `.planning/codebase/STRUCTURE.md`: structure-focused mapping document.
 
-## Source Module Inventory (`src/`)
-- `src/index.ts`: MCP server bootstrap and all tool registrations.
-- `src/ado-api.ts`: Azure DevOps API client, URL parsing/building, retry policy, and domain transforms.
-- `src/config.ts`: env config model and validation helpers.
+## Source Module Breakdown
+- `src/index.ts` owns process startup and tool surface (`ado_ping`, `ado_get_work_item`, `ado_list_comments`, `ado_add_comment`, `ado_update_comment`, `ado_link_pr_to_work_item`, `ado_process_commit_message`).
+- `src/ado-api.ts` owns transport-level behavior (HTTP requests, retries, auth headers), response shaping, and URL/ID normalization helpers.
+- `src/config.ts` owns config loading (`loadAdoEnv`), config validation (`isAdoEnvComplete`), and consistent env error payload (`envErrorJson`).
 
-## Build and Runtime Structure
-- Dev run path: `npm run dev` -> `tsx src/index.ts` (`package.json`).
-- Build path: `npm run build` -> `tsc` into `dist/` (`package.json`, `tsconfig.json`).
-- Production start path: `npm run start` -> `node dist/index.js`.
-- Module system is ESM/NodeNext (`package.json` `"type": "module"`, `tsconfig.json` NodeNext).
+## Logical Layering
+- Entry Layer: `src/index.ts` (MCP protocol integration and schema validation).
+- Service Layer: `src/ado-api.ts` (domain operations and Azure DevOps API integration).
+- Config Layer: `src/config.ts` (environment boundary).
 
-## Naming and File Patterns
-- File naming uses lowercase kebab-ish/short names (`ado-api.ts`, `config.ts`, `index.ts`).
-- Exported types/interfaces are PascalCase (`WorkItemDetails`, `AdoEnvConfig`).
-- Internal helpers are lowerCamelCase (`projectRootUrl`, `normalizeGuid`).
-- API version constants are uppercase snake-like constants in `src/ado-api.ts`.
+## Data and Control Paths
+- Tool request arrives in `src/index.ts` and is validated with `zod` schemas.
+- A client instance is created from environment (`loadAdoEnv` + `isAdoEnvComplete`).
+- Business operation executes in `AdoClient` (`src/ado-api.ts`).
+- Output is normalized to text JSON via `toolResult()` in `src/index.ts`.
+- Errors pass through `errResult()`; typed API errors include HTTP status context.
 
-## Practical Feature Placement
-- New MCP tool definitions: add to `src/index.ts` near related tool group.
-- New Azure endpoint integrations: add method(s) to `src/ado-api.ts`.
-- Shared parsing/normalization utilities for ADO data: keep in `src/ado-api.ts` unless reused outside ADO concerns.
-- New environment flags or secrets contract: extend `src/config.ts`.
-- Avoid putting business logic in tool handlers; keep handlers as orchestration.
+## External Dependencies
+- `@modelcontextprotocol/sdk`: MCP server and stdio transport types used in `src/index.ts`.
+- `zod`: tool input schema definitions in `src/index.ts`.
+- Runtime native APIs: `fetch`, `URL`, and `Buffer` used in `src/ado-api.ts` (Node >=20).
 
-## Test Placement Recommendations
-- No test directory exists yet.
-- Add tests under `tests/` at repo root or `src/__tests__/` depending on runner choice.
-- Suggested split:
-- `tests/unit/ado-api.test.ts` for URL parsing, retries (with mocked fetch), mapping helpers.
-- `tests/unit/config.test.ts` for env completeness/error cases.
-- `tests/integration/tools.test.ts` for tool-layer behavior and error/result shaping.
-- Keep fixture payloads in `tests/fixtures/` for Azure API response samples.
+## Build and Execution Structure
+- Development entry command is `npm run dev` -> `tsx src/index.ts`.
+- Production build command is `npm run build` -> `tsc`.
+- Production start command is `npm start` -> `node dist/index.js`.
+- Bin mapping in `package.json` exposes CLI command `ado-mcp-server` pointing at `dist/index.js`.
 
-## Documentation Placement Recommendations
-- Expand `README.md` with setup (`ADO_PAT`, `ADO_ORG`, `ADO_PROJECT`) and tool catalog.
-- Keep architecture and structure references in `.planning/codebase/`.
-- Add operation examples in `docs/` if command/tool usage grows (e.g., `docs/tool-examples.md`).
-
-## Dependency Structure
-- Runtime deps (`package.json`): `@modelcontextprotocol/sdk`, `zod`.
-- Dev deps: `typescript`, `tsx`, `@types/node`.
-- External platform coupling is isolated to Azure DevOps REST in `src/ado-api.ts`.
-
-## Change Hotspots
-- Highest-change file likely `src/index.ts` when adding/removing tools.
-- Second hotspot `src/ado-api.ts` for new endpoints and workflow automation.
-- Lower churn expected in `src/config.ts`.
-
-## Structural Risks and Scaling Notes
-- Single `AdoClient` file can grow quickly; consider future split by concern (`work-items`, `comments`, `git-links`).
-- Lack of dedicated `types/` folder is fine now, but may become useful as DTO count increases.
-- `dist/` is build output and should remain generated-only (no manual edits).
+## Notable Structural Characteristics
+- Small codebase with three source files and clear responsibility split.
+- No test directories or CI config files are present in current tracked file list.
+- Planning artifacts are under `.planning/`, separated from runtime source under `src/`.
