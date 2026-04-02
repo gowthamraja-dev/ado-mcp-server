@@ -6,12 +6,21 @@
   "description": "Model Context Protocol server for Azure DevOps",
   "main": "dist/index.js",
   "bin": {
-    "ado-mcp-server": "dist/index.js"
+    "ado-mcp-server": "dist/index.js",
+    "ado-mcp-install-skills": "scripts/install-skills.mjs"
   },
+  "files": [
+    "dist",
+    "skills",
+    "scripts/install-skills.mjs",
+    "scripts/README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "install-skills": "node scripts/install-skills.mjs",
+    "postinstall": "node scripts/install-skills.mjs --default"
   },
   "engines": {
     "node": ">=20"

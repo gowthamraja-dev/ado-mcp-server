@@ -76,6 +76,75 @@ export interface ParsedGithubPrUrl {
   pullRequestId: number;
 }
 
+/**
+ * Infer Azure DevOps work item id from a git branch name.
+ *
+ * Primary format: `{type}/{name}_{taskType}{id}_{title}` — e.g.
+ * `feature/gowtham_CR3195_BasicPlanActivation` → id **3195** (letters+digits before `_title`).
+ *
+ * Also supports `#123` in the branch and generic fallbacks (numeric segments, etc.).
+ */
+export function extractWorkItemIdFromBranch(branch: string): number | null {
+  const b = branch.trim();
+  if (!b) return null;
+
+  const tryParse = (s: string): number | null => {
+    const n = Number.parseInt(s, 10);
+    return Number.isNaN(n) || n <= 0 ? null : n;
+  };
+
+  const hash = /#(\d+)/.exec(b);
+  if (hash) {
+    const id = tryParse(hash[1]!);
+    if (id !== null) return id;
+  }
+
+  /** `{name}_{taskType}{id}_{title}` on one path segment (task type = letters, id = digits). */
+  const typedSegment = (segment: string): number | null => {
+    const m = /^([^_]+)_([A-Za-z]+)(\d+)_(.+)$/.exec(segment.trim());
+    if (!m) return null;
+    return tryParse(m[3]!);
+  };
+
+  const segments = new Set<string>();
+  segments.add(b);
+  if (b.includes("/")) {
+    segments.add(b.slice(b.indexOf("/") + 1));
+    segments.add(b.slice(b.lastIndexOf("/") + 1));
+  }
+  for (const seg of segments) {
+    const id = typedSegment(seg);
+    if (id !== null) return id;
+  }
+
+  const prefix =
+    /(?:^|[/])(?:wi|task|bug|feature|item|workitem|work)[-/]?(\d+)/i.exec(b);
+  if (prefix) {
+    const id = tryParse(prefix[1]!);
+    if (id !== null) return id;
+  }
+
+  const afterSlash = /\/(\d{4,})(?:\/|-|_|$)/.exec(b);
+  if (afterSlash) {
+    const id = tryParse(afterSlash[1]!);
+    if (id !== null) return id;
+  }
+
+  const leading = /^(\d{4,})(?:[-/]|$)/.exec(b);
+  if (leading) {
+    const id = tryParse(leading[1]!);
+    if (id !== null) return id;
+  }
+
+  const fivePlus = /(\d{5,})/.exec(b);
+  if (fivePlus) {
+    const id = tryParse(fivePlus[1]!);
+    if (id !== null) return id;
+  }
+
+  return null;
+}
+
 export class AdoApiError extends Error {
   constructor(
     message: string,
@@ -382,23 +451,41 @@ export class AdoClient {
   }
 
   /**
-   * Parses commit message for #&lt;id&gt;, adds idempotent comment, optionally links PR.
+   * Parses commit message for #&lt;id&gt;, or infers id from branch name, adds idempotent comment, optionally links PR.
    */
   async processCommitMessage(
     commitMessage: string,
-    prUrl?: string
+    prUrl?: string,
+    branchName?: string
   ): Promise<Record<string, unknown>> {
-    const match = /#(\d+)/.exec(commitMessage);
-    if (!match) {
+    let workItemId: number | null = null;
+    let workItemSource: "commit_message" | "branch" | undefined;
+
+    const hashMatch = /#(\d+)/.exec(commitMessage);
+    if (hashMatch) {
+      workItemId = Number.parseInt(hashMatch[1]!, 10);
+      if (!Number.isNaN(workItemId) && workItemId > 0) {
+        workItemSource = "commit_message";
+      } else {
+        workItemId = null;
+      }
+    }
+
+    if (workItemId === null && branchName?.trim()) {
+      const fromBranch = extractWorkItemIdFromBranch(branchName.trim());
+      if (fromBranch !== null) {
+        workItemId = fromBranch;
+        workItemSource = "branch";
+      }
+    }
+
+    if (workItemId === null) {
       return {
         ok: true,
         matched: false,
-        reason: "No work item reference (#123) found in commit message.",
+        reason:
+          "No work item id: add #123 to the commit message, or pass branchName like feature/gowtham_CR3195_BasicPlanActivation ({type}/{name}_{taskType}{id}_{title}).",
       };
-    }
-    const workItemId = Number.parseInt(match[1]!, 10);
-    if (Number.isNaN(workItemId)) {
-      return { ok: false, matched: false, reason: "Invalid work item id." };
     }
 
     const commentText = `Updated via commit: ${commitMessage}`;
@@ -408,6 +495,7 @@ export class AdoClient {
       ok: true,
       matched: true,
       workItemId,
+      workItemSource,
       comment: {
         id: add.comment.id,
         text: add.comment.text,
