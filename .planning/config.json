@@ -1,0 +1,11 @@
+{
+  "project": "ado-mcp-server",
+  "planning_root": ".planning",
+  "artifacts": {
+    "project": "PROJECT.md",
+    "requirements": "REQUIREMENTS.md",
+    "roadmap": "ROADMAP.md",
+    "state": "STATE.md",
+    "research": "research/"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "ado-mcp-server",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Model Context Protocol server for Azure DevOps",
+  "main": "dist/index.js",
+  "bin": {
+    "ado-mcp-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
