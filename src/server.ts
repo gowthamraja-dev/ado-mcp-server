@@ -59,17 +59,33 @@ server.tool(
 );
 
 /**
- * Fetch work item fields used in planning: title, description, state, assignedTo.
+ * Fetch work item fields used in planning/review, with optional discussion comments.
  */
 server.tool(
   "ado_get_work_item",
-  "Get work item details by numeric id. Returns title, description, state, and assignedTo (display name).",
-  { workItemId: z.number().int().positive().describe("Azure DevOps work item id") },
-  async ({ workItemId }) => {
+  "Get work item details by numeric id. Returns core fields (title, description, acceptanceCriteria, definitionOfDone, reason, state, assignedTo) and optional discussion comments.",
+  {
+    workItemId: z.number().int().positive().describe("Azure DevOps work item id"),
+    includeDiscussion: z
+      .boolean()
+      .optional()
+      .describe("Include discussion comments in the response (default true)"),
+    discussionTop: z
+      .number()
+      .int()
+      .positive()
+      .max(500)
+      .optional()
+      .describe("Max discussion comments to include when includeDiscussion=true (default 50)"),
+  },
+  async ({ workItemId, includeDiscussion, discussionTop }) => {
     const client = createClient();
     if (!client) return toolResult(envErrorJson());
     try {
-      const workItem = await client.getWorkItemDetails(workItemId);
+      const workItem = await client.getWorkItemDetails(workItemId, {
+        includeDiscussion,
+        discussionTop,
+      });
       return toolResult({ ok: true, workItem });
     } catch (e) {
       return errResult(e);

@@ -10,7 +10,7 @@ All tools return **JSON** in a single text content part. Configure **ADO_PAT**, 
 | MCP tool | Skill folder | Use for |
 |----------|----------------|---------|
 | `ado_ping` | [ado-ping](../ado-ping/SKILL.md) | Health check, env configured? |
-| `ado_get_work_item` | [ado-get-work-item](../ado-get-work-item/SKILL.md) | Fetch title, description, state, assignee |
+| `ado_get_work_item` | [ado-get-work-item](../ado-get-work-item/SKILL.md) | Fetch rich task context: description, acceptance criteria, DoD, reason, state, assignee, optional discussions |
 | `ado_list_comments` | [ado-list-comments](../ado-list-comments/SKILL.md) | List comments on a work item |
 | `ado_add_comment` | [ado-add-comment](../ado-add-comment/SKILL.md) | Post a comment (optional duplicate skip) |
 | `ado_update_comment` | [ado-update-comment](../ado-update-comment/SKILL.md) | Edit comment by id |

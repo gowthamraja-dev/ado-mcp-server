@@ -43,10 +43,24 @@ export function normalizeCommentText(text: string): string {
 
 export interface WorkItemDetails {
   id: number;
+  workItemType: string | null;
   title: string | null;
   description: string | null;
+  acceptanceCriteria: string | null;
+  definitionOfDone: string | null;
+  reason: string | null;
+  history: string | null;
   state: string | null;
+  tags: string | null;
+  areaPath: string | null;
+  iterationPath: string | null;
+  changedDate: string | null;
+  changedBy: string | null;
   assignedTo: string | null;
+  discussions?: {
+    count: number;
+    comments: WorkItemComment[];
+  };
 }
 
 export interface WorkItemComment {
@@ -244,20 +258,43 @@ export class AdoClient {
     return `${base}/_apis/wit/workItems/${workItemId}/comments${suffix}?${q}`;
   }
 
-  async getWorkItemDetails(workItemId: number): Promise<WorkItemDetails> {
+  async getWorkItemDetails(
+    workItemId: number,
+    options?: { includeDiscussion?: boolean; discussionTop?: number }
+  ): Promise<WorkItemDetails> {
     const url = this.witUrl(`workitems/${workItemId}`);
     const data = await this.request<{
       id: number;
       fields?: Record<string, unknown>;
     }>("GET", url);
     const f = data.fields ?? {};
-    return {
+    const details: WorkItemDetails = {
       id: data.id,
+      workItemType: pickString(f["System.WorkItemType"]),
       title: pickString(f["System.Title"]),
       description: pickDescription(f["System.Description"]),
+      acceptanceCriteria: pickFirstDefinedString(f, [
+        "Microsoft.VSTS.Common.AcceptanceCriteria",
+        "Custom.AcceptanceCriteria",
+      ]),
+      definitionOfDone: pickDefinitionOfDone(f),
+      reason: pickString(f["System.Reason"]),
+      history: pickDescription(f["System.History"]),
       state: pickString(f["System.State"]),
+      tags: pickString(f["System.Tags"]),
+      areaPath: pickString(f["System.AreaPath"]),
+      iterationPath: pickString(f["System.IterationPath"]),
+      changedDate: pickString(f["System.ChangedDate"]),
+      changedBy: pickAssignedTo(f["System.ChangedBy"]),
       assignedTo: pickAssignedTo(f["System.AssignedTo"]),
     };
+    const includeDiscussion = options?.includeDiscussion !== false;
+    if (includeDiscussion) {
+      const top = normalizeDiscussionTop(options?.discussionTop);
+      const comments = await this.listComments(workItemId, top);
+      details.discussions = { count: comments.length, comments };
+    }
+    return details;
   }
 
   async listComments(
@@ -642,4 +679,38 @@ function pickAssignedTo(v: unknown): string | null {
     if (o.uniqueName) return o.uniqueName;
   }
   return null;
+}
+
+function pickFirstDefinedString(
+  fields: Record<string, unknown>,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = pickString(fields[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function pickDefinitionOfDone(fields: Record<string, unknown>): string | null {
+  const exact = pickFirstDefinedString(fields, ["Custom.DefinitionOfDone"]);
+  if (exact) return exact;
+
+  for (const [key, value] of Object.entries(fields)) {
+    const k = key.toLowerCase();
+    if (k.includes("definition") && k.includes("done")) {
+      const asString = pickString(value);
+      if (asString) return asString;
+    }
+  }
+
+  return null;
+}
+
+function normalizeDiscussionTop(v: number | undefined): number {
+  if (!Number.isFinite(v)) return 50;
+  const n = Math.trunc(v as number);
+  if (n < 1) return 1;
+  if (n > 500) return 500;
+  return n;
 }

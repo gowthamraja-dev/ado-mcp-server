@@ -5,6 +5,7 @@ MCP server for Azure DevOps work items and automation.
 ## What It Supports
 
 - Work item read/update-comment flows in Azure DevOps.
+  - `ado_get_work_item` now supports richer review context: acceptance criteria, definition of done, reason, metadata, and optional discussion comments.
 - Commit message automation (`#123` work item extraction).
 - PR linking to work items:
   - Azure DevOps PR URLs (`dev.azure.com/.../_git/.../pullrequest/{id}`) are added as `ArtifactLink`.
