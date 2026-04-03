@@ -11,7 +11,7 @@ MCP server for Azure DevOps work items and automation.
   - Azure DevOps PR URLs (`dev.azure.com/.../_git/.../pullrequest/{id}`) are added as `ArtifactLink`.
   - GitHub PR URLs (`github.com/{owner}/{repo}/pull/{id}`) are added as `Hyperlink`.
 - PR review workflow skill:
-  - UI-first review against work item description, acceptance criteria, DoD, and comment discussions, with scope filtering to relevant UI or backend service changes.
+  - UI-first review against work item description, acceptance criteria, DoD, and comment discussions, with scope filtering, evidence-based criteria mapping, and provisional fallback when Azure context is unavailable.
 
 ## Environment
 
